@@ -1,7 +1,7 @@
 ﻿param(
     [Parameter(Mandatory = $false)]
     [String]$Wallet, 
-    [Parameter(Mandatory = $true)]
+    [Parameter(Mandatory = $false)]
     [String]$UserName, 
     [Parameter(Mandatory = $false)]
     [String]$WorkerName = "multipoolminer", 
@@ -12,13 +12,13 @@
     [Parameter(Mandatory = $false)]
     [Int]$Interval = 60, #seconds before reading hash rate from miners
     [Parameter(Mandatory = $false)]
-    [String]$Location = "europe", #europe/us/asia
+    [String]$Region = "europe", #europe/us/asia
     [Parameter(Mandatory = $false)]
     [Switch]$SSL = $false, 
     [Parameter(Mandatory = $false)]
     [Array]$Type = $null, #AMD/NVIDIA/CPU
     [Parameter(Mandatory = $false)]
-    [Array]$Algorithm = $null, #i.e. Ethash,Equihash,Cryptonight ect.
+    [Array]$Algorithm = $null, #i.e. Ethash,Equihash,CryptoNight ect.
     [Parameter(Mandatory = $false)]
     [Array]$MinerName = $null, 
     [Parameter(Mandatory = $false)]
@@ -43,7 +43,9 @@ else {$PSDefaultParameterValues["*:Proxy"] = $Proxy}
 
 . .\Include.ps1
 
-$DecayStart = Get-Date
+$StatEnd = (Get-Date).ToUniversalTime()
+
+$DecayStart = (Get-Date).ToUniversalTime()
 $DecayPeriod = 60 #seconds
 $DecayBase = 1 - 0.1 #decimal percentage
 
@@ -52,11 +54,8 @@ $ActiveMiners = @()
 #Start the log
 Start-Transcript ".\Logs\$(Get-Date -Format "yyyy-MM-dd_HH-mm-ss").txt"
 
-#Update stats with missing data and set to today's date/time
-if (Test-Path "Stats") {Get-ChildItemContent "Stats" | ForEach-Object {Set-Stat $_.Name $_.Content.Week | Out-Null}}
-
 #Set donation parameters
-$LastDonated = (Get-Date).AddDays(-1).AddHours(1)
+$LastDonated = (Get-Date).ToUniversalTime().AddDays(-1).AddHours(1)
 $WalletDonate = "1Q24z7gHPDbedkaWDTFqhMF8g7iHMehsCb"
 $UserNameDonate = "aaronsace"
 $WorkerNameDonate = "multipoolminer"
@@ -65,19 +64,23 @@ $UserNameBackup = $UserName
 $WorkerNameBackup = $WorkerName
 
 while ($true) {
-    $DecayExponent = [int](((Get-Date) - $DecayStart).TotalSeconds / $DecayPeriod)
+    $StatStart = $StatEnd
+    $StatEnd = (Get-Date).ToUniversalTime().AddSeconds($Interval)
+    $StatSpan = New-TimeSpan $StatStart $StatEnd
+
+    $DecayExponent = [int](((Get-Date).ToUniversalTime() - $DecayStart).TotalSeconds / $DecayPeriod)
 
     #Activate or deactivate donation
-    if ((Get-Date).AddDays(-1).AddMinutes($Donate) -ge $LastDonated) {
+    if ((Get-Date).ToUniversalTime().AddDays(-1).AddMinutes($Donate) -ge $LastDonated) {
         $Wallet = $WalletDonate
         $UserName = $UserNameDonate
         $WorkerName = $WorkerNameDonate
     }
-    if ((Get-Date).AddDays(-1) -ge $LastDonated) {
+    if ((Get-Date).ToUniversalTime().AddDays(-1) -ge $LastDonated) {
         $Wallet = $WalletBackup
         $UserName = $UserNameBackup
         $WorkerName = $WorkerNameBackup
-        $LastDonated = Get-Date
+        $LastDonated = (Get-Date).ToUniversalTime()
     }
 
     $Rates = [PSCustomObject]@{}
@@ -89,13 +92,14 @@ while ($true) {
 
     #Load information about the Pools
     $AllPools = if (Test-Path "Pools") {
-        Get-ChildItemContent "Pools" | ForEach-Object {$_.Content | Add-Member @{Name = $_.Name} -PassThru} 
+        Get-ChildItemContent "Pools" | ForEach-Object {$_.Content | Add-Member @{Name = $_.Name} -PassThru} | 
+            Where-Object {$Algorithm.Count -eq 0 -or (Compare-Object $Algorithm $_.Algorithm -IncludeEqual -ExcludeDifferent | Measure-Object).Count -gt 0}
     }
     if ($AllPools.Count -eq 0) {"No Pools!" | Out-Host; Start-Sleep $Interval; continue}
     $Pools = [PSCustomObject]@{}
     $Pools_Comparison = [PSCustomObject]@{}
-    $AllPools.Algorithm | ForEach-Object {$_.ToLower()} | Select-Object -Unique | ForEach-Object {$Pools | Add-Member $_ ($AllPools | Sort-Object -Descending {$PoolName.Count -eq 0 -or (Compare-Object $PoolName $_.Name -IncludeEqual -ExcludeDifferent | Measure-Object).Count -gt 0}, Price, {$_.Location -EQ $Location}, {$_.SSL -EQ $SSL} | Where-Object Algorithm -EQ $_ | Select-Object -First 1)}
-    $AllPools.Algorithm | ForEach-Object {$_.ToLower()} | Select-Object -Unique | ForEach-Object {$Pools_Comparison | Add-Member $_ ($AllPools | Sort-Object -Descending {$PoolName.Count -eq 0 -or (Compare-Object $PoolName $_.Name -IncludeEqual -ExcludeDifferent | Measure-Object).Count -gt 0}, StablePrice, {$_.Location -EQ $Location}, {$_.SSL -EQ $SSL} | Where-Object Algorithm -EQ $_ | Select-Object -First 1)}
+    $AllPools.Algorithm | ForEach-Object {$_.ToLower()} | Select-Object -Unique | ForEach-Object {$Pools | Add-Member $_ ($AllPools | Sort-Object -Descending {$PoolName.Count -eq 0 -or (Compare-Object $PoolName $_.Name -IncludeEqual -ExcludeDifferent | Measure-Object).Count -gt 0}, Price, {$_.Region -EQ $Region}, {$_.SSL -EQ $SSL} | Where-Object Algorithm -EQ $_ | Select-Object -First 1)}
+    $AllPools.Algorithm | ForEach-Object {$_.ToLower()} | Select-Object -Unique | ForEach-Object {$Pools_Comparison | Add-Member $_ ($AllPools | Sort-Object -Descending {$PoolName.Count -eq 0 -or (Compare-Object $PoolName $_.Name -IncludeEqual -ExcludeDifferent | Measure-Object).Count -gt 0}, StablePrice, {$_.Region -EQ $Region}, {$_.SSL -EQ $SSL} | Where-Object Algorithm -EQ $_ | Select-Object -First 1)}
 
     #Load information about the Miners
     #Messy...?
@@ -341,7 +345,7 @@ while ($true) {
     Start-Sleep $Delay #Wait to prevent BSOD
     $ActiveMiners | Where-Object Best -EQ $true | ForEach-Object {
         if ($_.Process -eq $null -or $_.Process.HasExited -ne $false) {
-            $DecayStart = Get-Date
+            $DecayStart = (Get-Date).ToUniversalTime()
             $_.New = $true
             $_.Activated++
             if ($_.Process -ne $null) {$_.Active += $_.Process.ExitTime - $_.Process.StartTime}
@@ -377,7 +381,7 @@ while ($true) {
         [PSCustomObject]@{"Miner" = "MultiPoolMiner"}, 
         [PSCustomObject]@{"Miner" = $BestMiners_Combo_Comparison | ForEach-Object {"$($_.Name)-$($_.Algorithm -join "/")"}}
             
-        $BestMiners_Combo_Stat = Set-Stat -Name "Profit" -Value ($BestMiners_Combo | Measure-Object Profit -Sum).Sum
+        $BestMiners_Combo_Stat = Set-Stat -Name "Profit" -Value ($BestMiners_Combo | Measure-Object Profit -Sum).Sum -Duration $StatSpan
 
         $MinerComparisons_Profit = $BestMiners_Combo_Stat.Week, ($BestMiners_Combo_Comparison | Measure-Object Profit_Comparison -Sum).Sum
 
@@ -397,10 +401,10 @@ while ($true) {
     }
 
     #Do nothing for a few seconds as to not overload the APIs and display miner download status
-    for ($i = 0; $i -lt 10; $i++) {
+    do {
         Get-Job | Receive-Job
-        Start-Sleep ($Interval / 10)
-    }
+        Start-Sleep 10
+    }while ((Get-Date).ToUniversalTime() -lt $StatEnd)
 
     #Save current hash rates
     $ActiveMiners | ForEach-Object {
@@ -414,12 +418,14 @@ while ($true) {
         }
         else {
             $Miner_HashRates = Get-HashRate $_.API $_.Port ($_.New -and $_.Benchmarked -lt 3)
-
             $_.Speed_Live = $Miner_HashRates | Select-Object -First $_.Algorithm.Count
+
+            $Miner_StatSpan = $StatSpan
+            if ($_.New) {$Miner_StatSpan = New-TimeSpan -Seconds ($StatSpan.TotalSeconds * 100)}
             
             if ($Miner_HashRates.Count -ge $_.Algorithm.Count) {
                 for ($i = 0; $i -lt $_.Algorithm.Count; $i++) {
-                    $Stat = Set-Stat -Name "$($_.Name)_$($_.Algorithm | Select-Object -Index $i)_HashRate" -Value ($Miner_HashRates | Select-Object -Index $i)
+                    $Stat = Set-Stat -Name "$($_.Name)_$($_.Algorithm | Select-Object -Index $i)_HashRate" -Value ($Miner_HashRates | Select-Object -Index $i) -Duration $Miner_StatSpan
                 }
 
                 $_.New = $false
@@ -430,7 +436,7 @@ while ($true) {
         if ($_.Benchmarked -ge 6 -or ($_.Benchmarked -ge 2 -and $_.Activated -ge 2)) {
             for ($i = $Miner_HashRates.Count; $i -lt $_.Algorithm.Count; $i++) {
                 if ((Get-Stat "$($_.Name)_$($_.Algorithm | Select-Object -Index $i)_HashRate") -eq $null) {
-                    $Stat = Set-Stat -Name "$($_.Name)_$($_.Algorithm | Select-Object -Index $i)_HashRate" -Value 0
+                    $Stat = Set-Stat -Name "$($_.Name)_$($_.Algorithm | Select-Object -Index $i)_HashRate" -Value 0 -Duration $StatSpan
                 }
             }
         }

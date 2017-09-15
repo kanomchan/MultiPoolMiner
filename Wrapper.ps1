@@ -54,10 +54,10 @@ do {
                 "ph/s" {$HashRate *= [Math]::Pow(1000, 5)}
             }
 
-            $HashRate | Set-Content ".\Wrapper_$Id.txt"
+            $HashRate | ConvertTo-Json | Set-Content ".\Wrapper_$Id.txt"
         }
 
-        $Line
+        Write-Host $Line -NoNewline
     }
 
     if ((Get-Process | Where-Object Id -EQ $ControllerProcessID) -eq $null) {$PowerShell.Stop() | Out-Null}
